@@ -36,8 +36,11 @@ type Cloud interface {
 	// Region for the kubernetes cluster
 	Region() string
 
-	// VPC ID for the the kubernetes cluster
+	// ID of VPC to create load balancers in
 	VpcID() string
+
+	// VPC cache duration in minutes
+	VpcCacheDuration() int
 }
 
 // NewCloud constructs new Cloud implementation.
@@ -137,4 +140,8 @@ func (c *defaultCloud) Region() string {
 
 func (c *defaultCloud) VpcID() string {
 	return c.cfg.VpcID
+}
+
+func (c *defaultCloud) VpcCacheDuration() int {
+	return c.cfg.VpcCacheDuration
 }
