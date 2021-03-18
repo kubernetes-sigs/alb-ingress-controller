@@ -3,10 +3,15 @@ package targetgroupbinding
 import (
 	"context"
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/ec2"
 	elbv2sdk "github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/util/cache"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"net"
+	elbv2api "sigs.k8s.io/aws-load-balancer-controller/apis/elbv2/v1beta1"
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/aws/services"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,17 +31,20 @@ type TargetsManager interface {
 	DeregisterTargets(ctx context.Context, tgARN string, targets []elbv2sdk.TargetDescription) error
 
 	// List Targets from TargetGroup.
-	ListTargets(ctx context.Context, tgARN string) ([]TargetInfo, error)
+	ListTargets(ctx context.Context, tgb *elbv2api.TargetGroupBinding) ([]TargetInfo, error)
 }
 
 // NewCachedTargetsManager constructs new cachedTargetsManager
-func NewCachedTargetsManager(elbv2Client services.ELBV2, logger logr.Logger) *cachedTargetsManager {
+func NewCachedTargetsManager(elbv2Client services.ELBV2, ec2Client services.EC2, watchIPBlocks []string, watchInstanceFilters []string, logger logr.Logger) *cachedTargetsManager {
 	return &cachedTargetsManager{
 		elbv2Client:                elbv2Client,
+		ec2Client:                  ec2Client,
 		targetsCache:               cache.NewExpiring(),
 		targetsCacheTTL:            defaultTargetsCacheTTL,
 		registerTargetsChunkSize:   defaultRegisterTargetsChunkSize,
 		deregisterTargetsChunkSize: defaultDeregisterTargetsChunkSize,
+		watchIPBlocks:              watchIPBlocks,
+		watchInstanceFilters:       watchInstanceFilters,
 		logger:                     logger,
 	}
 }
@@ -49,6 +57,7 @@ var _ TargetsManager = &cachedTargetsManager{}
 // only targets with ongoing TargetHealth(unknown/initial/draining) TargetHealth will be refreshed.
 type cachedTargetsManager struct {
 	elbv2Client services.ELBV2
+	ec2Client   services.EC2
 
 	// cache of targets by targetGroupARN.
 	// NOTE: since this cache implementation will automatically GC expired entries, we don't need to GC entries.
@@ -63,6 +72,9 @@ type cachedTargetsManager struct {
 	registerTargetsChunkSize int
 	// chunk size for deregisterTargets API call.
 	deregisterTargetsChunkSize int
+
+	watchIPBlocks        []string
+	watchInstanceFilters []string
 
 	logger logr.Logger
 }
@@ -117,15 +129,16 @@ func (m *cachedTargetsManager) DeregisterTargets(ctx context.Context, tgARN stri
 	return nil
 }
 
-func (m *cachedTargetsManager) ListTargets(ctx context.Context, tgARN string) ([]TargetInfo, error) {
+func (m *cachedTargetsManager) ListTargets(ctx context.Context, tgb *elbv2api.TargetGroupBinding) ([]TargetInfo, error) {
 	m.targetsCacheMutex.Lock()
 	defer m.targetsCacheMutex.Unlock()
 
+	tgARN := tgb.Spec.TargetGroupARN
 	if rawTargetsCacheItem, exists := m.targetsCache.Get(tgARN); exists {
 		targetsCacheItem := rawTargetsCacheItem.(*targetsCacheItem)
 		targetsCacheItem.mutex.Lock()
 		defer targetsCacheItem.mutex.Unlock()
-		refreshedTargets, err := m.refreshUnhealthyTargets(ctx, tgARN, targetsCacheItem.targets)
+		refreshedTargets, err := m.refreshUnhealthyTargets(ctx, tgb, targetsCacheItem.targets)
 		if err != nil {
 			return nil, err
 		}
@@ -133,7 +146,7 @@ func (m *cachedTargetsManager) ListTargets(ctx context.Context, tgARN string) ([
 		return cloneTargetInfoSlice(refreshedTargets), nil
 	}
 
-	refreshedTargets, err := m.refreshAllTargets(ctx, tgARN)
+	refreshedTargets, err := m.refreshAllTargets(ctx, tgb)
 	if err != nil {
 		return nil, err
 	}
@@ -146,8 +159,8 @@ func (m *cachedTargetsManager) ListTargets(ctx context.Context, tgARN string) ([
 }
 
 // refreshAllTargets will refresh all targets for targetGroup.
-func (m *cachedTargetsManager) refreshAllTargets(ctx context.Context, tgARN string) ([]TargetInfo, error) {
-	targets, err := m.listTargetsFromAWS(ctx, tgARN, nil)
+func (m *cachedTargetsManager) refreshAllTargets(ctx context.Context, tgb *elbv2api.TargetGroupBinding) ([]TargetInfo, error) {
+	targets, err := m.listTargetsFromAWS(ctx, tgb, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +170,7 @@ func (m *cachedTargetsManager) refreshAllTargets(ctx context.Context, tgARN stri
 // refreshUnhealthyTargets will refresh targets that are not in healthy status for targetGroup.
 // To save API calls, we don't refresh targets that are already healthy since once a target turns healthy, we'll unblock it's readinessProbe.
 // we can do nothing from controller perspective when a healthy target becomes unhealthy.
-func (m *cachedTargetsManager) refreshUnhealthyTargets(ctx context.Context, tgARN string, cachedTargets []TargetInfo) ([]TargetInfo, error) {
+func (m *cachedTargetsManager) refreshUnhealthyTargets(ctx context.Context, tgb *elbv2api.TargetGroupBinding, cachedTargets []TargetInfo) ([]TargetInfo, error) {
 	var refreshedTargets []TargetInfo
 	var unhealthyTargets []elbv2sdk.TargetDescription
 	for _, cachedTarget := range cachedTargets {
@@ -171,7 +184,7 @@ func (m *cachedTargetsManager) refreshUnhealthyTargets(ctx context.Context, tgAR
 		return refreshedTargets, nil
 	}
 
-	refreshedUnhealthyTargets, err := m.listTargetsFromAWS(ctx, tgARN, unhealthyTargets)
+	refreshedUnhealthyTargets, err := m.listTargetsFromAWS(ctx, tgb, unhealthyTargets)
 	if err != nil {
 		return nil, err
 	}
@@ -187,11 +200,21 @@ func (m *cachedTargetsManager) refreshUnhealthyTargets(ctx context.Context, tgAR
 // listTargetsFromAWS will list targets for TargetGroup using ELBV2API.
 // if specified targets is non-empty, only these targets will be listed.
 // otherwise, all targets for targetGroup will be listed.
-func (m *cachedTargetsManager) listTargetsFromAWS(ctx context.Context, tgARN string, targets []elbv2sdk.TargetDescription) ([]TargetInfo, error) {
+func (m *cachedTargetsManager) listTargetsFromAWS(ctx context.Context, tgb *elbv2api.TargetGroupBinding, targets []elbv2sdk.TargetDescription) ([]TargetInfo, error) {
 	req := &elbv2sdk.DescribeTargetHealthInput{
-		TargetGroupArn: aws.String(tgARN),
+		TargetGroupArn: aws.String(tgb.Spec.TargetGroupARN),
 		Targets:        pointerizeTargetDescriptions(targets),
 	}
+	var watchInstances sets.String = nil
+	if *tgb.Spec.TargetType == elbv2api.TargetTypeInstance &&
+		len(m.watchInstanceFilters) > 0 {
+		watchInstances = sets.String{}
+		err := m.getInstancesByTags(ctx, &watchInstances)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	resp, err := m.elbv2Client.DescribeTargetHealthWithContext(ctx, req)
 	if err != nil {
 		return nil, err
@@ -199,12 +222,57 @@ func (m *cachedTargetsManager) listTargetsFromAWS(ctx context.Context, tgARN str
 
 	listedTargets := make([]TargetInfo, 0, len(resp.TargetHealthDescriptions))
 	for _, elem := range resp.TargetHealthDescriptions {
+		if *tgb.Spec.TargetType == elbv2api.TargetTypeIP &&
+			len(m.watchIPBlocks) > 0 &&
+			!m.isInCIDRsRange(m.watchIPBlocks, *elem.Target.Id) {
+			continue
+		}
+		if *tgb.Spec.TargetType == elbv2api.TargetTypeInstance &&
+			len(watchInstances) > 0 &&
+			!watchInstances.Has(*elem.Target.Id) {
+			continue
+		}
 		listedTargets = append(listedTargets, TargetInfo{
 			Target:       *elem.Target,
 			TargetHealth: elem.TargetHealth,
 		})
 	}
 	return listedTargets, nil
+}
+
+func (m *cachedTargetsManager) getInstancesByTags(ctx context.Context, watchedInstances *sets.String) error {
+	ec2Filters := make([]*ec2.Filter, 0, len(m.watchInstanceFilters))
+	for _, filter := range m.watchInstanceFilters {
+		kv := strings.Split(filter, "=")
+		name := &kv[0]
+		values := make([]*string, 0)
+		for _, v := range strings.Split(kv[1], ",") {
+			values = append(values, &v)
+		}
+		ec2Filters = append(ec2Filters, &ec2.Filter{
+			Name:   name,
+			Values: values,
+		})
+	}
+	instances, err := m.ec2Client.DescribeInstancesAsList(ctx, &ec2.DescribeInstancesInput{Filters: ec2Filters})
+	if err != nil {
+		return err
+	}
+	for _, instance := range instances {
+		watchedInstances.Insert(*instance.InstanceId)
+	}
+	return nil
+}
+
+func (m *cachedTargetsManager) isInCIDRsRange(ipBlocks []string, ip string) bool {
+	for _, cidr := range ipBlocks {
+		_, subnet, _ := net.ParseCIDR(cidr)
+		if subnet.Contains(net.ParseIP(ip)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // recordSuccessfulRegisterTargetsOperation will record a successful deregisterTarget operation

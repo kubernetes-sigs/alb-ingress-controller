@@ -1,8 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
+	"net"
+	"regexp"
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/aws"
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/inject"
 )
@@ -14,6 +17,8 @@ const (
 	flagServiceMaxConcurrentReconciles            = "service-max-concurrent-reconciles"
 	flagTargetGroupBindingMaxConcurrentReconciles = "targetgroupbinding-max-concurrent-reconciles"
 	flagDefaultSSLPolicy                          = "default-ssl-policy"
+	flagWatchIPBlocks                             = "watch-ip-blocks"
+	flagWatchInstanceFilters                      = "watch-instance-filters"
 	defaultLogLevel                               = "info"
 	defaultMaxConcurrentReconciles                = 3
 	defaultSSLPolicy                              = "ELBSecurityPolicy-2016-08"
@@ -47,6 +52,10 @@ type ControllerConfig struct {
 	ServiceMaxConcurrentReconciles int
 	// Max concurrent reconcile loops for TargetGroupBinding objects
 	TargetGroupBindingMaxConcurrentReconciles int
+	// IP blocks in CIDR notation
+	WatchIPBlocks []string
+	// AWS Filters to filter instances
+	WatchInstanceFilters []string
 }
 
 // BindFlags binds the command line flags to the fields in the config object
@@ -62,6 +71,12 @@ func (cfg *ControllerConfig) BindFlags(fs *pflag.FlagSet) {
 		"Maximum number of concurrently running reconcile loops for targetGroupBinding")
 	fs.StringVar(&cfg.DefaultSSLPolicy, flagDefaultSSLPolicy, defaultSSLPolicy,
 		"Default SSL policy for load balancers listeners")
+	fs.StringSliceVar(&cfg.WatchIPBlocks, flagWatchIPBlocks, nil,
+		"When using TargetType: ip, you can specify IP blocks in CIDR notation to only list (from AWS) ip "+
+			"targets that fall within their ranges.")
+	fs.StringSliceVar(&cfg.WatchInstanceFilters, flagWatchInstanceFilters, nil,
+		"When using TargetType: instance, you can specify filters to only list (from AWS) instance targets that "+
+			"match the specified filters.")
 
 	cfg.AWSConfig.BindFlags(fs)
 	cfg.RuntimeConfig.BindFlags(fs)
@@ -76,5 +91,21 @@ func (cfg *ControllerConfig) Validate() error {
 	if len(cfg.ClusterName) == 0 {
 		return errors.New("kubernetes cluster name must be specified")
 	}
+	if len(cfg.WatchIPBlocks) > 0 {
+		for _, cidr := range cfg.WatchIPBlocks {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				parseError := err.(*net.ParseError)
+				return errors.New(fmt.Sprintf("CIDR provider is invalid: %s", parseError.Text))
+			}
+		}
+	}
+	if len(cfg.WatchInstanceFilters) > 0 {
+		for _, filter := range cfg.WatchInstanceFilters {
+			if match, err := regexp.MatchString("^\\w+=\\w+$", filter); !match || err != nil {
+				return errors.New(fmt.Sprintf("Filter is invalid: %s", filter))
+			}
+		}
+	}
+
 	return nil
 }

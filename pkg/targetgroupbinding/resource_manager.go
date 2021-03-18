@@ -35,11 +35,11 @@ type ResourceManager interface {
 }
 
 // NewDefaultResourceManager constructs new defaultResourceManager.
-func NewDefaultResourceManager(k8sClient client.Client, elbv2Client services.ELBV2,
+func NewDefaultResourceManager(k8sClient client.Client, elbv2Client services.ELBV2, ec2Client services.EC2,
 	podInfoRepo k8s.PodInfoRepo, podENIResolver networking.PodENIInfoResolver, nodeENIResolver networking.NodeENIInfoResolver,
 	sgManager networking.SecurityGroupManager, sgReconciler networking.SecurityGroupReconciler,
-	vpcID string, clusterName string, logger logr.Logger) *defaultResourceManager {
-	targetsManager := NewCachedTargetsManager(elbv2Client, logger)
+	vpcID string, clusterName string, watchIPBlocks []string, watchInstanceFilters []string, logger logr.Logger) *defaultResourceManager {
+	targetsManager := NewCachedTargetsManager(elbv2Client, ec2Client, watchIPBlocks, watchInstanceFilters, logger)
 	endpointResolver := backend.NewDefaultEndpointResolver(k8sClient, podInfoRepo, logger)
 	networkingManager := NewDefaultNetworkingManager(k8sClient, podENIResolver, nodeENIResolver, sgManager, sgReconciler, vpcID, clusterName, logger)
 	return &defaultResourceManager{
@@ -99,7 +99,7 @@ func (m *defaultResourceManager) reconcileWithIPTargetType(ctx context.Context, 
 	}
 
 	tgARN := tgb.Spec.TargetGroupARN
-	targets, err := m.targetsManager.ListTargets(ctx, tgARN)
+	targets, err := m.targetsManager.ListTargets(ctx, tgb)
 	if err != nil {
 		return err
 	}
@@ -149,7 +149,7 @@ func (m *defaultResourceManager) reconcileWithInstanceTargetType(ctx context.Con
 		return err
 	}
 	tgARN := tgb.Spec.TargetGroupARN
-	targets, err := m.targetsManager.ListTargets(ctx, tgARN)
+	targets, err := m.targetsManager.ListTargets(ctx, tgb)
 	if err != nil {
 		return err
 	}
@@ -170,7 +170,7 @@ func (m *defaultResourceManager) reconcileWithInstanceTargetType(ctx context.Con
 }
 
 func (m *defaultResourceManager) cleanupTargets(ctx context.Context, tgb *elbv2api.TargetGroupBinding) error {
-	targets, err := m.targetsManager.ListTargets(ctx, tgb.Spec.TargetGroupARN)
+	targets, err := m.targetsManager.ListTargets(ctx, tgb)
 	if err != nil {
 		if isELBV2TargetGroupNotFoundError(err) {
 			return nil

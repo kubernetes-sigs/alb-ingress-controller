@@ -2,11 +2,14 @@ package targetgroupbinding
 
 import (
 	"context"
+	"github.com/aws/aws-sdk-go/aws"
 	awssdk "github.com/aws/aws-sdk-go/aws"
+	ec2sdk "github.com/aws/aws-sdk-go/service/ec2"
 	elbv2sdk "github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/util/cache"
+	elbv2api "sigs.k8s.io/aws-load-balancer-controller/apis/elbv2/v1beta1"
 	mock_services "sigs.k8s.io/aws-load-balancer-controller/mocks/aws/services"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sync"
@@ -545,6 +548,8 @@ func Test_cachedTargetsManager_DeregisterTargets(t *testing.T) {
 }
 
 func Test_cachedTargetsManager_ListTargets(t *testing.T) {
+	ipTargetType := elbv2api.TargetTypeIP
+
 	type describeTargetHealthWithContextCall struct {
 		req  *elbv2sdk.DescribeTargetHealthInput
 		resp *elbv2sdk.DescribeTargetHealthOutput
@@ -555,8 +560,9 @@ func Test_cachedTargetsManager_ListTargets(t *testing.T) {
 		targetsCache                         map[string][]TargetInfo
 	}
 	type args struct {
-		tgARN string
+		tgb *elbv2api.TargetGroupBinding
 	}
+
 	tests := []struct {
 		name             string
 		fields           fields
@@ -592,7 +598,12 @@ func Test_cachedTargetsManager_ListTargets(t *testing.T) {
 				targetsCache: nil,
 			},
 			args: args{
-				tgARN: "my-tg",
+				tgb: &elbv2api.TargetGroupBinding{
+					Spec: elbv2api.TargetGroupBindingSpec{
+						TargetGroupARN: "my-tg",
+						TargetType:     &ipTargetType,
+					},
+				},
 			},
 			want: []TargetInfo{
 				{
@@ -638,7 +649,12 @@ func Test_cachedTargetsManager_ListTargets(t *testing.T) {
 				},
 			},
 			args: args{
-				tgARN: "my-tg",
+				tgb: &elbv2api.TargetGroupBinding{
+					Spec: elbv2api.TargetGroupBindingSpec{
+						TargetGroupARN: "my-tg",
+						TargetType:     &ipTargetType,
+					},
+				},
 			},
 			want: []TargetInfo{
 				{
@@ -719,7 +735,12 @@ func Test_cachedTargetsManager_ListTargets(t *testing.T) {
 				},
 			},
 			args: args{
-				tgARN: "my-tg",
+				tgb: &elbv2api.TargetGroupBinding{
+					Spec: elbv2api.TargetGroupBindingSpec{
+						TargetGroupARN: "my-tg",
+						TargetType:     &ipTargetType,
+					},
+				},
 			},
 			want: []TargetInfo{
 				{
@@ -790,7 +811,7 @@ func Test_cachedTargetsManager_ListTargets(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			got, err := m.ListTargets(ctx, tt.args.tgARN)
+			got, err := m.ListTargets(ctx, tt.args.tgb)
 			if tt.wantErr != nil {
 				assert.EqualError(t, err, tt.wantErr.Error())
 			} else {
@@ -809,6 +830,8 @@ func Test_cachedTargetsManager_ListTargets(t *testing.T) {
 }
 
 func Test_cachedTargetsManager_refreshUnhealthyTargets(t *testing.T) {
+	ipTargetType := elbv2api.TargetTypeIP
+
 	type describeTargetHealthWithContextCall struct {
 		req  *elbv2sdk.DescribeTargetHealthInput
 		resp *elbv2sdk.DescribeTargetHealthOutput
@@ -818,8 +841,8 @@ func Test_cachedTargetsManager_refreshUnhealthyTargets(t *testing.T) {
 		describeTargetHealthWithContextCalls []describeTargetHealthWithContextCall
 	}
 	type args struct {
-		tgARN         string
 		cachedTargets []TargetInfo
+		tgb           *elbv2api.TargetGroupBinding
 	}
 	tests := []struct {
 		name    string
@@ -834,7 +857,12 @@ func Test_cachedTargetsManager_refreshUnhealthyTargets(t *testing.T) {
 				describeTargetHealthWithContextCalls: nil,
 			},
 			args: args{
-				tgARN: "my-tg",
+				tgb: &elbv2api.TargetGroupBinding{
+					Spec: elbv2api.TargetGroupBindingSpec{
+						TargetGroupARN: "my-tg",
+						TargetType:     &ipTargetType,
+					},
+				},
 				cachedTargets: []TargetInfo{
 					{
 						Target: elbv2sdk.TargetDescription{
@@ -922,7 +950,12 @@ func Test_cachedTargetsManager_refreshUnhealthyTargets(t *testing.T) {
 				},
 			},
 			args: args{
-				tgARN: "my-tg",
+				tgb: &elbv2api.TargetGroupBinding{
+					Spec: elbv2api.TargetGroupBindingSpec{
+						TargetGroupARN: "my-tg",
+						TargetType:     &ipTargetType,
+					},
+				},
 				cachedTargets: []TargetInfo{
 					{
 						Target: elbv2sdk.TargetDescription{
@@ -1013,7 +1046,12 @@ func Test_cachedTargetsManager_refreshUnhealthyTargets(t *testing.T) {
 				},
 			},
 			args: args{
-				tgARN: "my-tg",
+				tgb: &elbv2api.TargetGroupBinding{
+					Spec: elbv2api.TargetGroupBindingSpec{
+						TargetGroupARN: "my-tg",
+						TargetType:     &ipTargetType,
+					},
+				},
 				cachedTargets: []TargetInfo{
 					{
 						Target: elbv2sdk.TargetDescription{
@@ -1123,7 +1161,12 @@ func Test_cachedTargetsManager_refreshUnhealthyTargets(t *testing.T) {
 				},
 			},
 			args: args{
-				tgARN: "my-tg",
+				tgb: &elbv2api.TargetGroupBinding{
+					Spec: elbv2api.TargetGroupBindingSpec{
+						TargetGroupARN: "my-tg",
+						TargetType:     &ipTargetType,
+					},
+				},
 				cachedTargets: []TargetInfo{
 					{
 						Target: elbv2sdk.TargetDescription{
@@ -1188,7 +1231,7 @@ func Test_cachedTargetsManager_refreshUnhealthyTargets(t *testing.T) {
 				elbv2Client: elbv2Client,
 			}
 			ctx := context.Background()
-			got, err := m.refreshUnhealthyTargets(ctx, tt.args.tgARN, tt.args.cachedTargets)
+			got, err := m.refreshUnhealthyTargets(ctx, tt.args.tgb, tt.args.cachedTargets)
 			if tt.wantErr != nil {
 				assert.EqualError(t, err, tt.wantErr.Error())
 			} else {
@@ -1200,18 +1243,29 @@ func Test_cachedTargetsManager_refreshUnhealthyTargets(t *testing.T) {
 }
 
 func Test_cachedTargetsManager_listTargetsFromAWS(t *testing.T) {
+	ipTargetType := elbv2api.TargetTypeIP
+	instanceTargetType := elbv2api.TargetTypeInstance
+
 	type describeTargetHealthWithContextCall struct {
 		req  *elbv2sdk.DescribeTargetHealthInput
 		resp *elbv2sdk.DescribeTargetHealthOutput
 		err  error
 	}
+	type describeInstancesAsListsCall struct {
+		req  *ec2sdk.DescribeInstancesInput
+		resp []*ec2sdk.Instance
+		err  error
+	}
 	type fields struct {
 		describeTargetHealthWithContextCalls []describeTargetHealthWithContextCall
+		describeInstancesAsListsCalls        []describeInstancesAsListsCall
 	}
 
 	type args struct {
-		tgARN   string
-		targets []elbv2sdk.TargetDescription
+		targets              []elbv2sdk.TargetDescription
+		tgb                  *elbv2api.TargetGroupBinding
+		watchIPBlocks        []string
+		watchInstanceFilters []string
 	}
 	tests := []struct {
 		name    string
@@ -1252,7 +1306,12 @@ func Test_cachedTargetsManager_listTargetsFromAWS(t *testing.T) {
 				},
 			},
 			args: args{
-				tgARN: "my-tg",
+				tgb: &elbv2api.TargetGroupBinding{
+					Spec: elbv2api.TargetGroupBindingSpec{
+						TargetGroupARN: "my-tg",
+						TargetType:     &ipTargetType,
+					},
+				},
 				targets: []elbv2sdk.TargetDescription{
 					{
 						Id:   awssdk.String("192.168.1.1"),
@@ -1310,7 +1369,12 @@ func Test_cachedTargetsManager_listTargetsFromAWS(t *testing.T) {
 				},
 			},
 			args: args{
-				tgARN:   "my-tg",
+				tgb: &elbv2api.TargetGroupBinding{
+					Spec: elbv2api.TargetGroupBindingSpec{
+						TargetGroupARN: "my-tg",
+						TargetType:     &ipTargetType,
+					},
+				},
 				targets: nil,
 			},
 			want: []TargetInfo{
@@ -1336,6 +1400,184 @@ func Test_cachedTargetsManager_listTargetsFromAWS(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "list with nil targets filtered by CIDRs",
+			fields: fields{
+				describeTargetHealthWithContextCalls: []describeTargetHealthWithContextCall{
+					{
+						req: &elbv2sdk.DescribeTargetHealthInput{
+							TargetGroupArn: awssdk.String("my-tg"),
+							Targets:        nil,
+						},
+						resp: &elbv2sdk.DescribeTargetHealthOutput{
+							TargetHealthDescriptions: []*elbv2sdk.TargetHealthDescription{
+								{
+									Target: &elbv2sdk.TargetDescription{
+										Id:   awssdk.String("10.10.1.1"),
+										Port: awssdk.Int64(8080),
+									},
+									TargetHealth: &elbv2sdk.TargetHealth{
+										Reason: awssdk.String(elbv2sdk.TargetHealthReasonEnumElbRegistrationInProgress),
+										State:  awssdk.String(elbv2sdk.TargetHealthStateEnumInitial),
+									},
+								},
+								{
+									Target: &elbv2sdk.TargetDescription{
+										Id:   awssdk.String("192.168.1.1"),
+										Port: awssdk.Int64(8080),
+									},
+									TargetHealth: &elbv2sdk.TargetHealth{
+										Reason: awssdk.String(elbv2sdk.TargetHealthReasonEnumElbRegistrationInProgress),
+										State:  awssdk.String(elbv2sdk.TargetHealthStateEnumInitial),
+									},
+								},
+								{
+									Target: &elbv2sdk.TargetDescription{
+										Id:   awssdk.String("192.168.1.2"),
+										Port: awssdk.Int64(8080),
+									},
+									TargetHealth: &elbv2sdk.TargetHealth{
+										Reason: awssdk.String(elbv2sdk.TargetHealthReasonEnumElbRegistrationInProgress),
+										State:  awssdk.String(elbv2sdk.TargetHealthStateEnumInitial),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			args: args{
+				targets:       nil,
+				watchIPBlocks: []string{"192.168.1.0/24"},
+				tgb: &elbv2api.TargetGroupBinding{
+					Spec: elbv2api.TargetGroupBindingSpec{
+						TargetGroupARN: "my-tg",
+						TargetType:     &ipTargetType,
+					},
+				},
+			},
+			want: []TargetInfo{
+				{
+					Target: elbv2sdk.TargetDescription{
+						Id:   awssdk.String("192.168.1.1"),
+						Port: awssdk.Int64(8080),
+					},
+					TargetHealth: &elbv2sdk.TargetHealth{
+						Reason: awssdk.String(elbv2sdk.TargetHealthReasonEnumElbRegistrationInProgress),
+						State:  awssdk.String(elbv2sdk.TargetHealthStateEnumInitial),
+					},
+				},
+				{
+					Target: elbv2sdk.TargetDescription{
+						Id:   awssdk.String("192.168.1.2"),
+						Port: awssdk.Int64(8080),
+					},
+					TargetHealth: &elbv2sdk.TargetHealth{
+						Reason: awssdk.String(elbv2sdk.TargetHealthReasonEnumElbRegistrationInProgress),
+						State:  awssdk.String(elbv2sdk.TargetHealthStateEnumInitial),
+					},
+				},
+			},
+		},
+		{
+			name: "list with nil targets filtered by tags",
+			fields: fields{
+				describeInstancesAsListsCalls: []describeInstancesAsListsCall{
+					{
+						req: &ec2sdk.DescribeInstancesInput{
+							Filters: []*ec2sdk.Filter{
+								{
+									Name:   aws.String("tag:someTag"),
+									Values: []*string{aws.String("someValue")},
+								},
+							},
+						},
+						resp: []*ec2sdk.Instance{
+							{
+								InstanceId: awssdk.String("i-abcdefg2"),
+							},
+							{
+								InstanceId: awssdk.String("i-abcdefg3"),
+							},
+						},
+					},
+				},
+				describeTargetHealthWithContextCalls: []describeTargetHealthWithContextCall{
+					{
+						req: &elbv2sdk.DescribeTargetHealthInput{
+							TargetGroupArn: awssdk.String("my-tg"),
+							Targets:        nil,
+						},
+						resp: &elbv2sdk.DescribeTargetHealthOutput{
+							TargetHealthDescriptions: []*elbv2sdk.TargetHealthDescription{
+								{
+									Target: &elbv2sdk.TargetDescription{
+										Id:   awssdk.String("i-abcdefg1"),
+										Port: awssdk.Int64(8080),
+									},
+									TargetHealth: &elbv2sdk.TargetHealth{
+										Reason: awssdk.String(elbv2sdk.TargetHealthReasonEnumElbRegistrationInProgress),
+										State:  awssdk.String(elbv2sdk.TargetHealthStateEnumInitial),
+									},
+								},
+								{
+									Target: &elbv2sdk.TargetDescription{
+										Id:   awssdk.String("i-abcdefg2"),
+										Port: awssdk.Int64(8080),
+									},
+									TargetHealth: &elbv2sdk.TargetHealth{
+										Reason: awssdk.String(elbv2sdk.TargetHealthReasonEnumElbRegistrationInProgress),
+										State:  awssdk.String(elbv2sdk.TargetHealthStateEnumInitial),
+									},
+								},
+								{
+									Target: &elbv2sdk.TargetDescription{
+										Id:   awssdk.String("i-abcdefg3"),
+										Port: awssdk.Int64(8080),
+									},
+									TargetHealth: &elbv2sdk.TargetHealth{
+										Reason: awssdk.String(elbv2sdk.TargetHealthReasonEnumElbRegistrationInProgress),
+										State:  awssdk.String(elbv2sdk.TargetHealthStateEnumInitial),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			args: args{
+				targets:              nil,
+				watchInstanceFilters: []string{"tag:someTag=someValue"},
+				tgb: &elbv2api.TargetGroupBinding{
+					Spec: elbv2api.TargetGroupBindingSpec{
+						TargetGroupARN: "my-tg",
+						TargetType:     &instanceTargetType,
+					},
+				},
+			},
+			want: []TargetInfo{
+				{
+					Target: elbv2sdk.TargetDescription{
+						Id:   awssdk.String("i-abcdefg2"),
+						Port: awssdk.Int64(8080),
+					},
+					TargetHealth: &elbv2sdk.TargetHealth{
+						Reason: awssdk.String(elbv2sdk.TargetHealthReasonEnumElbRegistrationInProgress),
+						State:  awssdk.String(elbv2sdk.TargetHealthStateEnumInitial),
+					},
+				},
+				{
+					Target: elbv2sdk.TargetDescription{
+						Id:   awssdk.String("i-abcdefg3"),
+						Port: awssdk.Int64(8080),
+					},
+					TargetHealth: &elbv2sdk.TargetHealth{
+						Reason: awssdk.String(elbv2sdk.TargetHealthReasonEnumElbRegistrationInProgress),
+						State:  awssdk.String(elbv2sdk.TargetHealthStateEnumInitial),
+					},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1347,11 +1589,19 @@ func Test_cachedTargetsManager_listTargetsFromAWS(t *testing.T) {
 				elbv2Client.EXPECT().DescribeTargetHealthWithContext(gomock.Any(), call.req).Return(call.resp, call.err)
 			}
 
+			ec2Client := mock_services.NewMockEC2(ctrl)
+			for _, call := range tt.fields.describeInstancesAsListsCalls {
+				ec2Client.EXPECT().DescribeInstancesAsList(gomock.Any(), call.req).Return(call.resp, call.err)
+			}
+
 			m := &cachedTargetsManager{
-				elbv2Client: elbv2Client,
+				elbv2Client:          elbv2Client,
+				ec2Client:            ec2Client,
+				watchIPBlocks:        tt.args.watchIPBlocks,
+				watchInstanceFilters: tt.args.watchInstanceFilters,
 			}
 			ctx := context.Background()
-			got, err := m.listTargetsFromAWS(ctx, tt.args.tgARN, tt.args.targets)
+			got, err := m.listTargetsFromAWS(ctx, tt.args.tgb, tt.args.targets)
 			if tt.wantErr != nil {
 				assert.EqualError(t, err, tt.wantErr.Error())
 			} else {

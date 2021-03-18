@@ -70,7 +70,6 @@ spec:
   ...
 ```
 
-
 ## Reference
 See the [reference](./spec.md) for TargetGroupBinding CR
 

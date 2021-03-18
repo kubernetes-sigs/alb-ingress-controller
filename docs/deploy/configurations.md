@@ -85,7 +85,8 @@ Currently, you can set only 1 namespace to watch in this flag. See [this Kuberne
 |targetgroupbinding-max-concurrent-reconciles | int                       | 3               | Maximum number of concurrently running reconcile loops for targetGroupBinding |
 |watch-namespace                        | string                          |                 | Namespace the controller watches for updates to Kubernetes objects, If empty, all namespaces are watched. |
 |webhook-bind-port                      | int                             | 9443            | The TCP port the Webhook server binds to |
-
+|watch-ip-blocks                        | []string                        |                 | When using `TargetType: ip`, you can specify IP blocks in CIDR notation to only list (from AWS) ip targets that fall within their ranges. This is  useful when sharing a single target group among many `aws-load-balancer-controller` instances (for example across different clusters), so registration/deregistration of one controller does not affect other controllers. |
+|watch-instance-filters                 | []string                        |                 | When using `TargetType: instance`, you can specify filters to only list (from AWS) instance targets that match the specified filters. This is  useful when sharing a single target group among many `aws-load-balancer-controller` instances (for example across different clusters), so registration/deregistration of one controller does not affect other controllers. Please read [this reference](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeInstances.html) for more information about these filters. |
 
 ### Default throttle config
 ```
