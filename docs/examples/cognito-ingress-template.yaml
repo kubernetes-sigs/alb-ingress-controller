@@ -16,7 +16,7 @@
 #
 #    - Related Kubernetes service/application
 #
-
+---
 apiVersion: extensions/v1beta1
 kind: Ingress
 metadata:
