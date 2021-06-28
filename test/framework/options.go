@@ -2,6 +2,7 @@ package framework
 
 import (
 	"flag"
+
 	"github.com/pkg/errors"
 )
 
@@ -29,7 +30,7 @@ type Options struct {
 func (options *Options) BindFlags() {
 	flag.StringVar(&options.ClusterName, "cluster-name", "", `Kubernetes cluster name (required)`)
 	flag.StringVar(&options.AWSRegion, "aws-region", "", `AWS Region for the kubernetes cluster`)
-	flag.StringVar(&options.AWSVPCID, "aws-vpc-id", "", `AWS VPC ID for the kubernetes cluster`)
+	flag.StringVar(&options.AWSVPCID, "aws-vpc-id", "", `ID of VPC to create load balancers in`)
 
 	flag.StringVar(&options.ControllerImage, "controller-image", "", `AWS Load Balancer Controller image`)
 

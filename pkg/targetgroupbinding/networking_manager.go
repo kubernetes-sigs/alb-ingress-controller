@@ -3,6 +3,10 @@ package targetgroupbinding
 import (
 	"context"
 	"fmt"
+	"net"
+	"strings"
+	"sync"
+
 	awssdk "github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	ec2sdk "github.com/aws/aws-sdk-go/service/ec2"
@@ -13,14 +17,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"net"
 	elbv2api "sigs.k8s.io/aws-load-balancer-controller/apis/elbv2/v1beta1"
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/backend"
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/k8s"
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/networking"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"strings"
-	"sync"
 )
 
 const (
@@ -38,6 +39,9 @@ type NetworkingManager interface {
 
 	// Cleanup reconcile network settings for TargetGroupBindings with zero endpoints.
 	Cleanup(ctx context.Context, tgb *elbv2api.TargetGroupBinding) error
+
+	// VpcID returns the ID of the VPC the ELB is attached to.
+	VpcID() string
 }
 
 // NewDefaultNetworkingManager constructs defaultNetworkingManager.
@@ -112,6 +116,10 @@ func (m *defaultNetworkingManager) ReconcileForNodePortEndpoints(ctx context.Con
 
 func (m *defaultNetworkingManager) Cleanup(ctx context.Context, tgb *elbv2api.TargetGroupBinding) error {
 	return m.reconcileWithIngressPermissionsPerSG(ctx, tgb, nil)
+}
+
+func (m *defaultNetworkingManager) VpcID() string {
+	return m.vpcID
 }
 
 func (m *defaultNetworkingManager) computeIngressPermissionsPerSGWithPodEndpoints(ctx context.Context, tgbNetworking elbv2api.TargetGroupBindingNetworking, endpoints []backend.PodEndpoint) (map[string][]networking.IPPermissionInfo, error) {

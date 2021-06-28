@@ -2,7 +2,10 @@ package targetgroupbinding
 
 import (
 	"context"
+	"testing"
+
 	awssdk "github.com/aws/aws-sdk-go/aws"
+	ec2sdk "github.com/aws/aws-sdk-go/service/ec2"
 	elbv2sdk "github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -16,7 +19,6 @@ import (
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/k8s"
 	testclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"testing"
 )
 
 func Test_defaultResourceManager_updateTargetHealthPodConditionForPod(t *testing.T) {
@@ -496,6 +498,106 @@ func Test_buildPodConditionPatch(t *testing.T) {
 				gotPatch, _ := got.Data(nil)
 				assert.Equal(t, tt.wantPatch, gotPatch)
 				assert.Equal(t, types.StrategicMergePatchType, got.Type())
+			}
+		})
+	}
+}
+
+func Test_isELBV2TargetInELBVPC(t *testing.T) {
+	v := &ec2sdk.Vpc{
+		CidrBlock: awssdk.String("192.168.1.0/24"),
+		CidrBlockAssociationSet: []*ec2sdk.VpcCidrBlockAssociation{
+			{
+				CidrBlock: awssdk.String("10.10.10.0/24"),
+			},
+			{
+				CidrBlock: awssdk.String("10.10.20.0/24"),
+			},
+		},
+	}
+
+	type args struct {
+		podIP string
+		vpc   *ec2sdk.Vpc
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{
+			name: "pod IP is in VPC CIDR",
+			args: args{
+				podIP: "192.168.1.1",
+				vpc:   v,
+			},
+			want: true,
+		},
+		{
+			name: "pod IP is in first secondary VPC CIDR",
+			args: args{
+				podIP: "10.10.10.1",
+				vpc:   v,
+			},
+			want: true,
+		},
+		{
+			name: "pod IP is in second secondary first VPC CIDR",
+			args: args{
+				podIP: "10.10.20.1",
+				vpc:   v,
+			},
+			want: true,
+		},
+		{
+			name: "pod IP is not in VPC",
+			args: args{
+				podIP: "10.0.0.1",
+				vpc:   v,
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isELBV2TargetInELBVPC(tt.args.podIP, tt.args.vpc); got != tt.want {
+				t.Errorf("isELBV2TargetInELBVPC() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_isIPinCIDR(t *testing.T) {
+	type args struct {
+		ipAddr    string
+		cidrBlock string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{
+			name: "yes",
+			args: args{
+				ipAddr:    "10.10.10.10",
+				cidrBlock: "10.0.0.0/8",
+			},
+			want: true,
+		},
+		{
+			name: "no",
+			args: args{
+				ipAddr:    "10.10.10.10",
+				cidrBlock: "10.0.0.0/24",
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isIPinCIDR(tt.args.ipAddr, tt.args.cidrBlock); got != tt.want {
+				t.Errorf("isIPinCIDR() = %v, want %v", got, tt.want)
 			}
 		})
 	}
