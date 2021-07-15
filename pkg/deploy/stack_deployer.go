@@ -36,6 +36,7 @@ func NewDefaultStackDeployer(cloud aws.Cloud, k8sClient client.Client,
 		k8sClient:                           k8sClient,
 		addonsConfig:                        config.AddonsConfig,
 		trackingProvider:                    trackingProvider,
+		ec2ESManager:                        ec2.NewDefaultEndpointServiceManager(cloud.EC2(), cloud.VpcID(), logger),
 		ec2TaggingManager:                   ec2TaggingManager,
 		ec2SGManager:                        ec2.NewDefaultSecurityGroupManager(cloud.EC2(), trackingProvider, ec2TaggingManager, networkingSGReconciler, cloud.VpcID(), config.ExternalManagedTags, logger),
 		elbv2TaggingManager:                 elbv2TaggingManager,
@@ -60,6 +61,7 @@ type defaultStackDeployer struct {
 	k8sClient                           client.Client
 	addonsConfig                        config.AddonsConfig
 	trackingProvider                    tracking.Provider
+	ec2ESManager                        ec2.EndpointServiceManager
 	ec2TaggingManager                   ec2.TaggingManager
 	ec2SGManager                        ec2.SecurityGroupManager
 	elbv2TaggingManager                 elbv2.TaggingManager
@@ -104,6 +106,9 @@ func (d *defaultStackDeployer) Deploy(ctx context.Context, stack core.Stack) err
 	}
 	if shieldNeeded {
 		synthesizers = append(synthesizers, shield.NewProtectionSynthesizer(d.shieldProtectionManager, d.logger, stack))
+	}
+	if d.addonsConfig.EndpointServiceEnabled {
+		synthesizers = append(synthesizers, ec2.NewEndpointServiceSynthesizer(d.cloud.EC2(), d.trackingProvider, d.ec2TaggingManager, d.ec2ESManager, d.vpcID, d.logger, stack))
 	}
 
 	for _, synthesizer := range synthesizers {

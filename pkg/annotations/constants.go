@@ -79,4 +79,8 @@ const (
 	SvcLBSuffixALPNPolicy                    = "aws-load-balancer-alpn-policy"
 	SvcLBSuffixTargetNodeLabels              = "aws-load-balancer-target-node-labels"
 	SvcLBSuffixLoadBalancerAttributes        = "aws-load-balancer-attributes"
+
+	SvcLBSuffixEndpointServiceAcceptanceRequired = "aws-load-balancer-endpoint-service-acceptance-required"
+	SvcLBSuffixEndpointServiceAllowedPrincipals  = "aws-load-balancer-endpoint-service-allowed-principals"
+	SvcLBSuffixEndpointServicePrivateDNSName     = "aws-load-balancer-endpoint-service-private-dns-name"
 )

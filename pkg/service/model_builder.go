@@ -99,6 +99,9 @@ func (b *defaultModelBuilder) Build(ctx context.Context, service *corev1.Service
 		defaultHealthCheckTimeoutForInstanceModeLocal:            6,
 		defaultHealthCheckHealthyThresholdForInstanceModeLocal:   2,
 		defaultHealthCheckUnhealthyThresholdForInstanceModeLocal: 2,
+
+		defaultEndpointServiceAcceptanceRequired: true,
+		defaultEndpointServicePrivateDnsName:     "",
 	}
 
 	if err := task.run(ctx); err != nil {
@@ -148,6 +151,10 @@ type defaultModelBuildTask struct {
 	defaultHealthCheckTimeoutForInstanceModeLocal            int64
 	defaultHealthCheckHealthyThresholdForInstanceModeLocal   int64
 	defaultHealthCheckUnhealthyThresholdForInstanceModeLocal int64
+
+	// Default VPC Endpoint Service settings
+	defaultEndpointServiceAcceptanceRequired bool
+	defaultEndpointServicePrivateDnsName     string
 }
 
 func (t *defaultModelBuildTask) run(ctx context.Context) error {
@@ -178,6 +185,10 @@ func (t *defaultModelBuildTask) buildModel(ctx context.Context) error {
 		return err
 	}
 	err = t.buildListeners(ctx, scheme)
+	if err != nil {
+		return err
+	}
+	err = t.buildEndpointService(ctx)
 	if err != nil {
 		return err
 	}
