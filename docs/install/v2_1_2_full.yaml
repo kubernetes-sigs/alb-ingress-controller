@@ -485,6 +485,8 @@ spec:
         - args:
             - --cluster-name=your-cluster-name
             - --ingress-class=alb
+            - --aws-region=eks-vpc-region
+            - --aws-vpc-id=eks-vpc-id
           image: amazon/aws-alb-ingress-controller:v2.1.2
           livenessProbe:
             failureThreshold: 2
