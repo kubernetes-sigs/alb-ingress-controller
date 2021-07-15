@@ -45,7 +45,7 @@ The IAM permissions can either be setup via IAM roles for ServiceAccount or can 
     ```
     Take note of the policy ARN that is returned
 
-1. Create a IAM role and ServiceAccount for the AWS Load Balancer controller, use the ARN from the step above
+1. Create an IAM role and ServiceAccount for the AWS Load Balancer controller, use the ARN from the step above
     ```
     eksctl create iamserviceaccount \
     --cluster=<cluster-name> \
