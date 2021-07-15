@@ -98,6 +98,7 @@ the NLB will route traffic to. See [Network Load Balancers](https://docs.aws.ama
     !!!warning "limitations"
         - Each subnets must be from a different Availability Zone
         - AWS has restrictions on disabling existing subnets for NLB. As a result, you might not be able to edit this annotation once the NLB gets provisioned.
+        - Kubernetes in-tree controller 1.18 does not support the annotation service.beta.kubernetes.io/aws-load-balancer-subnets, EKS supports the annotation   starting from EKS 1.19 release.
 
     !!!example
         ```
