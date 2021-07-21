@@ -67,6 +67,12 @@ tolerations: []
 
 affinity: {}
 
+updateStrategy: {}
+  # type: RollingUpdate
+  # rollingUpdate:
+  #   maxSurge: 1
+  #   maxUnavailable: 1
+
 podAnnotations: {}
 
 podLabels: {}
