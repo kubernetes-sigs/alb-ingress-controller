@@ -4,6 +4,7 @@ import (
 	"context"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"strconv"
+	"sync"
 
 	"github.com/aws/aws-sdk-go/service/ec2"
 	corev1 "k8s.io/api/core/v1"
@@ -122,6 +123,9 @@ type defaultModelBuildTask struct {
 	tgByResID    map[string]*elbv2model.TargetGroup
 	ec2Subnets   []*ec2.Subnet
 
+	fetchExistingLoadBalancerOnce sync.Once
+	existingLoadBalancer *elbv2deploy.LoadBalancerWithTags
+
 	defaultTags                          map[string]string
 	externalManagedTags                  sets.String
 	defaultSSLPolicy                     string
@@ -159,17 +163,11 @@ func (t *defaultModelBuildTask) run(ctx context.Context) error {
 }
 
 func (t *defaultModelBuildTask) buildModel(ctx context.Context) error {
-	scheme, explicitScheme, err := t.buildLoadBalancerScheme(ctx)
+	scheme, err := t.buildLoadBalancerScheme(ctx)
 	if err != nil {
 		return err
 	}
-	if !explicitScheme && len(t.service.Status.LoadBalancer.Ingress) != 0 {
-		scheme, err = t.getExistingLoadBalancerScheme(ctx)
-		if err != nil {
-			return err
-		}
-	}
-	t.ec2Subnets, err = t.resolveLoadBalancerSubnets(ctx, scheme)
+	t.ec2Subnets, err = t.buildLoadBalancerSubnets(ctx, scheme)
 	if err != nil {
 		return err
 	}

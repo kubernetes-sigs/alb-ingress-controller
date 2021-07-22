@@ -8,6 +8,7 @@ import (
 	"net"
 	"regexp"
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/algorithm"
+	elbv2deploy "sigs.k8s.io/aws-load-balancer-controller/pkg/deploy/elbv2"
 	"sort"
 	"strconv"
 
@@ -83,7 +84,32 @@ func (t *defaultModelBuildTask) buildLoadBalancerIPAddressType(_ context.Context
 	}
 }
 
-func (t *defaultModelBuildTask) buildLoadBalancerScheme(ctx context.Context) (elbv2model.LoadBalancerScheme, bool, error) {
+func (t *defaultModelBuildTask) buildLoadBalancerScheme(ctx context.Context) (elbv2model.LoadBalancerScheme, error) {
+	scheme, explicitSchemeSpecified, err := t.buildLoadBalancerSchemeViaAnnotation(ctx)
+	if err != nil {
+		return elbv2model.LoadBalancerSchemeInternal, err
+	}
+	if explicitSchemeSpecified {
+		return scheme, nil
+	}
+	existingLB, err := t.fetchExistingLoadBalancer(ctx)
+	if err != nil {
+		return elbv2model.LoadBalancerSchemeInternal, err
+	}
+	if existingLB != nil {
+		switch aws.StringValue(existingLB.LoadBalancer.Scheme) {
+		case string(elbv2model.LoadBalancerSchemeInternal):
+			return elbv2model.LoadBalancerSchemeInternal, nil
+		case string(elbv2model.LoadBalancerSchemeInternetFacing):
+			return elbv2model.LoadBalancerSchemeInternetFacing, nil
+		default:
+			return "", errors.New("invalid load balancer scheme")
+		}
+	}
+	return elbv2model.LoadBalancerSchemeInternal, nil
+}
+
+func (t *defaultModelBuildTask) buildLoadBalancerSchemeViaAnnotation(ctx context.Context) (elbv2model.LoadBalancerScheme, bool, error) {
 	rawScheme := ""
 	if exists := t.annotationParser.ParseStringAnnotation(annotations.SvcLBSuffixScheme, &rawScheme, t.service.Annotations); exists {
 		switch rawScheme {
@@ -115,23 +141,21 @@ func (t *defaultModelBuildTask) buildLoadBalancerSchemeLegacyAnnotation(_ contex
 	return elbv2model.LoadBalancerSchemeInternal, false, nil
 }
 
-func (t *defaultModelBuildTask) getExistingLoadBalancerScheme(ctx context.Context) (elbv2model.LoadBalancerScheme, error) {
-	stackTags := t.trackingProvider.StackTags(t.stack)
-	sdkLBs, err := t.elbv2TaggingManager.ListLoadBalancers(ctx, tracking.TagsAsTagFilter(stackTags))
-	if err != nil {
-		return "", err
-	}
-	if len(sdkLBs) == 0 {
-		return elbv2model.LoadBalancerSchemeInternal, nil
-	}
-	switch aws.StringValue(sdkLBs[0].LoadBalancer.Scheme) {
-	case string(elbv2model.LoadBalancerSchemeInternal):
-		return elbv2model.LoadBalancerSchemeInternal, nil
-	case string(elbv2model.LoadBalancerSchemeInternetFacing):
-		return elbv2model.LoadBalancerSchemeInternetFacing, nil
-	default:
-		return "", errors.New("invalid load balancer scheme")
-	}
+func (t *defaultModelBuildTask) fetchExistingLoadBalancer(ctx context.Context) (*elbv2deploy.LoadBalancerWithTags, error) {
+	var fetchError error
+	t.fetchExistingLoadBalancerOnce.Do(func() {
+		stackTags := t.trackingProvider.StackTags(t.stack)
+		sdkLBs, err := t.elbv2TaggingManager.ListLoadBalancers(ctx, tracking.TagsAsTagFilter(stackTags))
+		if err != nil {
+			fetchError = err
+		}
+		if len(sdkLBs) == 0 {
+			t.existingLoadBalancer = nil
+		} else {
+			t.existingLoadBalancer = &sdkLBs[0]
+		}
+	})
+	return t.existingLoadBalancer, fetchError
 }
 
 func (t *defaultModelBuildTask) buildAdditionalResourceTags(_ context.Context) (map[string]string, error) {
@@ -217,7 +241,7 @@ func (t *defaultModelBuildTask) getMatchingIPforSubnet(_ context.Context, subnet
 	return "", errors.Errorf("no matching ip for subnet %s", *subnet.SubnetId)
 }
 
-func (t *defaultModelBuildTask) resolveLoadBalancerSubnets(ctx context.Context, scheme elbv2model.LoadBalancerScheme) ([]*ec2.Subnet, error) {
+func (t *defaultModelBuildTask) buildLoadBalancerSubnets(ctx context.Context, scheme elbv2model.LoadBalancerScheme) ([]*ec2.Subnet, error) {
 	var rawSubnetNameOrIDs []string
 	if exists := t.annotationParser.ParseStringSliceAnnotation(annotations.SvcLBSuffixSubnets, &rawSubnetNameOrIDs, t.service.Annotations); exists {
 		return t.subnetsResolver.ResolveViaNameOrIDSlice(ctx, rawSubnetNameOrIDs,
@@ -225,6 +249,24 @@ func (t *defaultModelBuildTask) resolveLoadBalancerSubnets(ctx context.Context, 
 			networking.WithSubnetsResolveLBScheme(scheme),
 		)
 	}
+
+	existingLB, err := t.fetchExistingLoadBalancer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if existingLB != nil {
+		availabilityZones := existingLB.LoadBalancer.AvailabilityZones
+		subnetIDs := make([]string, 0, len(availabilityZones))
+		for _, availabilityZone := range availabilityZones {
+			subnetID := aws.StringValue(availabilityZone.SubnetId)
+			subnetIDs = append(subnetIDs, subnetID)
+		}
+		return t.subnetsResolver.ResolveViaNameOrIDSlice(ctx, subnetIDs,
+			networking.WithSubnetsResolveLBType(elbv2model.LoadBalancerTypeNetwork),
+			networking.WithSubnetsResolveLBScheme(scheme),
+		)
+	}
+
 	return t.subnetsResolver.ResolveViaDiscovery(ctx,
 		networking.WithSubnetsResolveLBType(elbv2model.LoadBalancerTypeNetwork),
 		networking.WithSubnetsResolveLBScheme(scheme),

@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	elbv2sdk "github.com/aws/aws-sdk-go/service/elbv2"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"sigs.k8s.io/aws-load-balancer-controller/pkg/model/core"
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/networking"
 	"testing"
 
@@ -14,6 +16,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/annotations"
+	elbv2deploy "sigs.k8s.io/aws-load-balancer-controller/pkg/deploy/elbv2"
+	"sigs.k8s.io/aws-load-balancer-controller/pkg/deploy/tracking"
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/model/elbv2"
 )
 
@@ -527,31 +531,56 @@ func Test_defaultModelBuilderTask_getMatchingIPforSubnet(t *testing.T) {
 	}
 }
 
-func Test_defaultModelBuilderTask_resolveLoadBalancerSubnets(t *testing.T) {
+func Test_defaultModelBuilderTask_buildLoadBalancerSubnets(t *testing.T) {
 	type resolveSubnetResults struct {
 		subnets []*ec2.Subnet
 		err     error
+	}
+	type args struct {
+		stack core.Stack
+	}
+	type listLoadBalancerCall struct {
+		sdkLBs  []elbv2deploy.LoadBalancerWithTags
+		err			error
+	}
+	listLoadBalancerCallForEmptyLB := listLoadBalancerCall{
+		sdkLBs: []elbv2deploy.LoadBalancerWithTags{},
 	}
 	tests := []struct {
 		name                     string
 		svc                      *corev1.Service
 		scheme                   elbv2.LoadBalancerScheme
-		resolveViaDiscovery      []resolveSubnetResults
-		resolveViaNameOrIDSlilce []resolveSubnetResults
+		provider 				 tracking.Provider
+		args 					 args
+		listLoadBalancersCalls	     	 []listLoadBalancerCall
+		resolveViaDiscoveryCalls      []resolveSubnetResults
+		resolveViaNameOrIDSlilceCalls []resolveSubnetResults
+		want     				 map[string]string
 	}{
 		{
 			name:   "subnet auto-discovery",
 			svc:    &corev1.Service{},
 			scheme: elbv2.LoadBalancerSchemeInternal,
-			resolveViaDiscovery: []resolveSubnetResults{
-				{
-					subnets: []*ec2.Subnet{
-						{
-							SubnetId:  aws.String("subnet-1"),
-							CidrBlock: aws.String("192.168.0.0/19"),
+			provider: tracking.NewDefaultProvider("service.k8s.aws", "cluster-name"),
+			args:     args{stack: core.NewDefaultStack(core.StackID{Namespace: "namespace", Name: "serviceName"})},
+			listLoadBalancersCalls: []listLoadBalancerCall{listLoadBalancerCallForEmptyLB},
+			resolveViaDiscoveryCalls: []resolveSubnetResults{
+					{
+						subnets: []*ec2.Subnet{
+							{
+								SubnetId:  aws.String("subnet-a"),
+								CidrBlock: aws.String("192.168.0.0/19"),
+							},
+							{
+								SubnetId:  aws.String("subnet-b"),
+								CidrBlock: aws.String("192.168.32.0/19"),
+							},
 						},
 					},
 				},
+			want: map[string]string{
+				"elbv2.k8s.aws/cluster": "cluster-name",
+				"service.k8s.aws/stack": "namespace/serviceName",
 			},
 		},
 		{
@@ -564,38 +593,112 @@ func Test_defaultModelBuilderTask_resolveLoadBalancerSubnets(t *testing.T) {
 				},
 			},
 			scheme: elbv2.LoadBalancerSchemeInternal,
-			resolveViaNameOrIDSlilce: []resolveSubnetResults{
-				{
-					subnets: []*ec2.Subnet{
-						{
-							SubnetId:  aws.String("subnet-abc"),
-							CidrBlock: aws.String("192.168.0.0/19"),
-						},
-						{
-							SubnetId:  aws.String("subnet-xyz"),
-							CidrBlock: aws.String("192.168.0.0/19"),
+			provider: tracking.NewDefaultProvider("service.k8s.aws", "cluster-name"),
+			args:     args{stack: core.NewDefaultStack(core.StackID{Namespace: "namespace", Name: "serviceName"})},
+			resolveViaNameOrIDSlilceCalls: []resolveSubnetResults{
+					{
+						subnets: []*ec2.Subnet{
+							{
+								SubnetId:  aws.String("subnet-abc"),
+								CidrBlock: aws.String("192.168.0.0/19"),
+							},
+							{
+								SubnetId:  aws.String("subnet-xyz"),
+								CidrBlock: aws.String("192.168.0.0/19"),
+							},
 						},
 					},
 				},
+			want: 	map[string]string{
+				"elbv2.k8s.aws/cluster": "cluster-name",
+				"service.k8s.aws/stack": "namespace/serviceName",
 			},
 		},
+		{
+			name:   "subnet resolve via Name or ID",
+			svc:    &corev1.Service{},
+			scheme: elbv2.LoadBalancerSchemeInternal,
+			provider: tracking.NewDefaultProvider("service.k8s.aws", "cluster-name"),
+			args:     args{stack: core.NewDefaultStack(core.StackID{Namespace: "namespace", Name: "serviceName"})},
+			listLoadBalancersCalls: []listLoadBalancerCall{
+					{
+						sdkLBs: []elbv2deploy.LoadBalancerWithTags{
+							{
+								LoadBalancer: &elbv2sdk.LoadBalancer{
+									LoadBalancerArn: aws.String("lb-1"),
+									AvailabilityZones: []*elbv2sdk.AvailabilityZone{
+										{
+											SubnetId: aws.String("subnet-c"),
+										},
+										{
+											SubnetId: aws.String("subnet-d"),
+										},
+									},
+								},
+								Tags: map[string]string{
+									"elbv2.k8s.aws/cluster": "cluster-name",
+									"service.k8s.aws/stack": "namespace/serviceName",
+								},
+							},
+						},
+					},
+				},
+			resolveViaNameOrIDSlilceCalls: []resolveSubnetResults{
+					{
+						subnets: []*ec2.Subnet{
+							{
+								SubnetId:  aws.String("subnet-c"),
+								CidrBlock: aws.String("192.168.0.0/19"),
+							},
+							{
+								SubnetId:  aws.String("subnet-d"),
+								CidrBlock: aws.String("192.168.0.0/19"),
+							},
+						},
+					},
+				},
+			want: map[string]string{
+				"elbv2.k8s.aws/cluster": "cluster-name",
+				"service.k8s.aws/stack": "namespace/serviceName",
+			},
+		},
+
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 
+			elbv2TaggingManager := elbv2deploy.NewMockTaggingManager(ctrl)
+			for _, call :=range tt.listLoadBalancersCalls {
+				elbv2TaggingManager.EXPECT().ListLoadBalancers(gomock.Any(), gomock.Any()).Return(call.sdkLBs, call.err)
+			}
+
 			subnetsResolver := networking.NewMockSubnetsResolver(ctrl)
-			for _, call := range tt.resolveViaDiscovery {
+			for _, call := range tt.resolveViaDiscoveryCalls{
 				subnetsResolver.EXPECT().ResolveViaDiscovery(gomock.Any(), gomock.Any()).Return(call.subnets, call.err)
 			}
-			for _, call := range tt.resolveViaNameOrIDSlilce {
+			for _, call := range tt.resolveViaNameOrIDSlilceCalls {
 				subnetsResolver.EXPECT().ResolveViaNameOrIDSlice(gomock.Any(), gomock.Any(), gomock.Any()).Return(call.subnets, call.err)
 			}
 			annotationParser := annotations.NewSuffixAnnotationParser("service.beta.kubernetes.io")
-			builder := &defaultModelBuildTask{service: tt.svc, annotationParser: annotationParser, subnetsResolver: subnetsResolver}
 
-			builder.resolveLoadBalancerSubnets(context.Background(), tt.scheme)
+			clusterName := "cluster-name"
+			trackingProvider := tracking.NewDefaultProvider("ingress.k8s.aws", clusterName)
+
+			builder := &defaultModelBuildTask{
+					clusterName: 			clusterName,
+					service: 				tt.svc,
+					stack: 					tt.args.stack,
+					annotationParser: 		annotationParser,
+					subnetsResolver: 		subnetsResolver,
+					trackingProvider: 		trackingProvider,
+					elbv2TaggingManager:	elbv2TaggingManager,
+				}
+			var got = tt.provider.StackTags(tt.args.stack)
+			assert.Equal(t, tt.want, got)
+
+			builder.buildLoadBalancerSubnets(context.Background(), tt.scheme)
 		})
 	}
 }

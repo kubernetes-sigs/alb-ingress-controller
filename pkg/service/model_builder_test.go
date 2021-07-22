@@ -26,6 +26,10 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 		subnets []*ec2.Subnet
 		err     error
 	}
+	type resolveViaNameOrIDSliceCall struct {
+		subnets []*ec2.Subnet
+		err     error
+	}
 	type listLoadBalancerCall struct {
 		sdkLBs []elbv2.LoadBalancerWithTags
 		err    error
@@ -70,16 +74,35 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 			},
 		},
 	}
-
+	resolveViaNameOrIDSliceCallForThreeSubnet := resolveViaNameOrIDSliceCall{
+		subnets: []*ec2.Subnet{
+			{
+				SubnetId:  aws.String("subnet-1"),
+				CidrBlock: aws.String("192.168.0.0/19"),
+			},
+			{
+				SubnetId:  aws.String("subnet-2"),
+				CidrBlock: aws.String("192.168.32.0/19"),
+			},
+			{
+				SubnetId:  aws.String("subnet-3"),
+				CidrBlock: aws.String("192.168.64.0/19"),
+			},
+		},
+	}
+	listLoadBalancerCallForEmptyLB := listLoadBalancerCall{
+		sdkLBs: []elbv2.LoadBalancerWithTags{},
+	}
 	tests := []struct {
-		testName                 string
-		resolveViaDiscoveryCalls []resolveViaDiscoveryCall
-		listLoadBalancerCalls    []listLoadBalancerCall
-		resolveCIDRsCalls        []resolveCIDRsCall
-		svc                      *corev1.Service
-		wantError                bool
-		wantValue                string
-		wantNumResources         int
+		testName                 	 string
+		resolveViaDiscoveryCalls 	 []resolveViaDiscoveryCall
+		resolveViaNameOrIDSliceCalls []resolveViaNameOrIDSliceCall
+		listLoadBalancerCalls    	 []listLoadBalancerCall
+		resolveCIDRsCalls        	 []resolveCIDRsCall
+		svc                      	 *corev1.Service
+		wantError                	 bool
+		wantValue                	 string
+		wantNumResources         	 int
 	}{
 		{
 			testName: "Simple service",
@@ -105,6 +128,7 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 				},
 			},
 			resolveViaDiscoveryCalls: []resolveViaDiscoveryCall{resolveViaDiscoveryCallForOneSubnet},
+			listLoadBalancerCalls: []listLoadBalancerCall{listLoadBalancerCallForEmptyLB},
 			wantError:                false,
 			wantValue: `
 {
@@ -246,6 +270,7 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 				},
 			},
 			resolveViaDiscoveryCalls: []resolveViaDiscoveryCall{resolveViaDiscoveryCallForOneSubnet},
+			listLoadBalancerCalls: []listLoadBalancerCall{listLoadBalancerCallForEmptyLB},
 			wantError:                false,
 			wantValue: `
 {
@@ -400,6 +425,7 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 				},
 			},
 			resolveViaDiscoveryCalls: []resolveViaDiscoveryCall{resolveViaDiscoveryCallForTwoSubnet},
+			listLoadBalancerCalls: []listLoadBalancerCall{listLoadBalancerCallForEmptyLB},
 			wantError:                false,
 			wantValue: `
 {
@@ -699,6 +725,7 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 				},
 			},
 			resolveViaDiscoveryCalls: []resolveViaDiscoveryCall{resolveViaDiscoveryCallForThreeSubnet},
+			listLoadBalancerCalls: []listLoadBalancerCall{listLoadBalancerCallForEmptyLB},
 			wantError:                false,
 			wantValue: `
 {
@@ -1041,6 +1068,7 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 					cidrs: []string{"192.168.0.0/16"},
 				},
 			},
+			listLoadBalancerCalls: []listLoadBalancerCall{listLoadBalancerCallForEmptyLB},
 			wantError: false,
 			wantValue: `
 {
@@ -1294,7 +1322,7 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 					},
 				},
 			},
-			resolveViaDiscoveryCalls: []resolveViaDiscoveryCall{resolveViaDiscoveryCallForThreeSubnet},
+			resolveViaNameOrIDSliceCalls: []resolveViaNameOrIDSliceCall{resolveViaNameOrIDSliceCallForThreeSubnet},
 			listLoadBalancerCalls: []listLoadBalancerCall{
 				{
 					sdkLBs: []elbv2.LoadBalancerWithTags{
@@ -1598,6 +1626,7 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 				},
 			},
 			resolveViaDiscoveryCalls: []resolveViaDiscoveryCall{resolveViaDiscoveryCallForOneSubnet},
+			listLoadBalancerCalls: []listLoadBalancerCall{listLoadBalancerCallForEmptyLB},
 			wantError:                false,
 			wantValue: `
 {
@@ -1756,6 +1785,7 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 					cidrs: []string{"192.160.0.0/16", "100.64.0.0/16"},
 				},
 			},
+			listLoadBalancerCalls: []listLoadBalancerCall{listLoadBalancerCallForEmptyLB},
 			wantNumResources: 4,
 			wantValue: `
 {
@@ -1901,6 +1931,7 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 			},
 			listLoadBalancerCalls: []listLoadBalancerCall{
 				{
+					sdkLBs: []elbv2.LoadBalancerWithTags{},
 					err: errors.New("error listing load balancer"),
 				},
 			},
@@ -1935,6 +1966,7 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 					err: errors.New("unable to resolve VPC CIDRs"),
 				},
 			},
+			listLoadBalancerCalls: []listLoadBalancerCall{listLoadBalancerCallForEmptyLB},
 			wantError: true,
 		},
 	}
@@ -1947,6 +1979,9 @@ func Test_defaultModelBuilderTask_Build(t *testing.T) {
 			subnetsResolver := networking.NewMockSubnetsResolver(ctrl)
 			for _, call := range tt.resolveViaDiscoveryCalls {
 				subnetsResolver.EXPECT().ResolveViaDiscovery(gomock.Any(), gomock.Any()).Return(call.subnets, call.err)
+			}
+			for _, call := range tt.resolveViaNameOrIDSliceCalls {
+				subnetsResolver.EXPECT().ResolveViaNameOrIDSlice(gomock.Any(), gomock.Any(), gomock.Any()).Return(call.subnets, call.err)
 			}
 
 			annotationParser := annotations.NewSuffixAnnotationParser("service.beta.kubernetes.io")
